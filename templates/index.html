@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProTrack Automation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>NBD ProTrack Automation System</h1>
+            <p>Automated report generation and download</p>
+        </header>
+
+        <div class="main-content">
+            <div class="form-section">
+                <h2>Configuration</h2>
+                <form id="automationForm">
+                    <div class="form-group">
+                        <label for="username">Username:</label>
+                        <input type="text" id="username" name="username" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="password">Password:</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="start_date">Start Date:</label>
+                            <input type="text" id="start_date" name="start_date" placeholder="MM/DD/YYYY" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="end_date">End Date:</label>
+                            <input type="text" id="end_date" name="end_date" placeholder="MM/DD/YYYY" required>
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" id="startBtn" class="btn btn-primary">
+                            <span class="btn-text">Start Automation</span>
+                            <span class="btn-spinner" style="display: none;">⏳</span>
+                        </button>
+                        <button type="button" id="stopBtn" class="btn btn-secondary" disabled>Stop Automation</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="status-section">
+                <h2>Status</h2>
+                <div class="status-container">
+                    <div class="status-header">
+                        <span class="status-indicator" id="statusIndicator">⚪</span>
+                        <span class="status-text" id="statusText">Ready</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="log-container">
+                        <div class="log-header">
+                            <span>Activity Log</span>
+                            <button type="button" id="clearLog" class="btn btn-small">Clear</button>
+                        </div>
+                        <div class="log-content" id="logContent">
+                            <div class="log-entry">System ready. Configure settings and click "Start Automation" to begin.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-section">
+            <h3>About This System</h3>
+            <p>This automated system processes <strong>42 different reports</strong> from ProTrack, generating both PDF and Excel versions for the specified date range. The system will:</p>
+            <ul>
+                <li>Log into ProTrack using your credentials</li>
+                <li>Navigate to Ad Hoc Reporting</li>
+                <li>Process all employee performance and ranking reports</li>
+                <li>Download and rename files with proper date formatting</li>
+                <li>Provide real-time status updates</li>
+            </ul>
+            <p><strong>Note:</strong> Keep this page open during automation. Downloads will be saved to the "downloads" folder.</p>
+        </div>
+    </div>
+
+    <script>
+        // Socket.IO connection
+        const socket = io();
+        
+        // DOM elements
+        const form = document.getElementById('automationForm');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const progressFill = document.getElementById('progressFill');
+        const logContent = document.getElementById('logContent');
+        const clearLog = document.getElementById('clearLog');
+        const btnText = document.querySelector('.btn-text');
+        const btnSpinner = document.querySelector('.btn-spinner');
+        
+        let isRunning = false;
+        let totalReports = 42;
+        let completedReports = 0;
+
+        // Socket event handlers
+        socket.on('connect', function() {
+            addLogEntry('Connected to server', 'success');
+        });
+
+        socket.on('status_update', function(data) {
+            addLogEntry(data.message, 'info');
+            updateProgress(data.message);
+        });
+
+        socket.on('automation_complete', function(data) {
+            isRunning = false;
+            updateUI();
+            if (data.status === 'success') {
+                setStatus('✅', 'Completed Successfully', 'success');
+                addLogEntry('All reports processed successfully!', 'success');
+            } else {
+                setStatus('❌', 'Failed', 'error');
+                addLogEntry(`Automation failed: ${data.message}`, 'error');
+            }
+        });
+
+        // Form submission
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                start_date: document.getElementById('start_date').value,
+                end_date: document.getElementById('end_date').value
+            };
+
+            if (!validateForm(formData)) {
+                return;
+            }
+
+            startAutomation(formData);
+        });
+
+        // Stop button
+        stopBtn.addEventListener('click', function() {
+            fetch('/stop_automation', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    isRunning = false;
+                    updateUI();
+                    setStatus('⏹️', 'Stopped', 'warning');
+                    addLogEntry('Automation stopped by user', 'warning');
+                }
+            });
+        });
+
+        // Clear log button
+        clearLog.addEventListener('click', function() {
+            logContent.innerHTML = '<div class="log-entry">Log cleared</div>';
+        });
+
+        // Functions
+        function validateForm(data) {
+            if (!data.username || !data.password || !data.start_date || !data.end_date) {
+                addLogEntry('Please fill in all fields', 'error');
+                return false;
+            }
+
+            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+            if (!dateRegex.test(data.start_date) || !dateRegex.test(data.end_date)) {
+                addLogEntry('Please use MM/DD/YYYY format for dates', 'error');
+                return false;
+            }
+
+            return true;
+        }
+
+        function startAutomation(data) {
+            fetch('/start_automation', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    isRunning = true;
+                    completedReports = 0;
+                    updateUI();
+                    setStatus('🔄', 'Running', 'running');
+                    addLogEntry('Automation started successfully', 'success');
+                } else {
+                    addLogEntry(`Error: ${data.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                addLogEntry(`Network error: ${error.message}`, 'error');
+            });
+        }
+
+        function updateUI() {
+            startBtn.disabled = isRunning;
+            stopBtn.disabled = !isRunning;
+            
+            if (isRunning) {
+                btnText.style.display = 'none';
+                btnSpinner.style.display = 'inline';
+                startBtn.classList.add('loading');
+            } else {
+                btnText.style.display = 'inline';
+                btnSpinner.style.display = 'none';
+                startBtn.classList.remove('loading');
+            }
+        }
+
+        function setStatus(icon, text, type) {
+            statusIndicator.textContent = icon;
+            statusText.textContent = text;
+            statusIndicator.className = `status-indicator ${type}`;
+        }
+
+        function updateProgress(message) {
+            // Extract progress from message if it contains report numbers
+            const progressMatch = message.match(/Processing report (\d+)\/(\d+)/);
+            if (progressMatch) {
+                const current = parseInt(progressMatch[1]);
+                const total = parseInt(progressMatch[2]);
+                const percentage = (current / total) * 100;
+                progressFill.style.width = `${percentage}%`;
+            }
+        }
+
+        function addLogEntry(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            
+            logContent.appendChild(logEntry);
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        // Initialize date inputs with current date
+        function initializeDates() {
+            const today = new Date();
+            const formatDate = (date) => {
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const year = date.getFullYear();
+                return `${month}/${day}/${year}`;
+            };
+            
+            document.getElementById('end_date').value = formatDate(today);
+            
+            // Set start date to beginning of current week (Monday)
+            const startOfWeek = new Date(today);
+            startOfWeek.setDate(today.getDate() - today.getDay() + 1);
+            document.getElementById('start_date').value = formatDate(startOfWeek);
+        }
+
+        // Initialize on page load
+        initializeDates();
+    </script>
+</body>
+</html>
