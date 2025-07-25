@@ -115,7 +115,7 @@ def run_automation(username, password, start_date, end_date):
         "profile.content_settings.exceptions.automatic_downloads.*.setting": 1
     }
     options.add_experimental_option("prefs", prefs)
-    options.add_argument("--start-maximized")
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
