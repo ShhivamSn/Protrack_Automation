@@ -1,28 +1,32 @@
 FROM python:3.10-slim
 
-# Install Chrome
-RUN apt-get update && apt-get install -y wget gnupg unzip curl \
- && curl -sSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
- && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
- && apt-get update && apt-get install -y google-chrome-stable
+# Install Chrome dependencies
+RUN apt-get update && apt-get install -y \
+    wget unzip curl gnupg2 fonts-liberation libappindicator3-1 libasound2 libatk-bridge2.0-0 libatk1.0-0 \
+    libcups2 libdbus-1-3 libgdk-pixbuf2.0-0 libnspr4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+    libxrandr2 xdg-utils libu2f-udev libvulkan1 libgbm1 libxshmfence1 libglu1-mesa && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install ChromeDriver
-RUN CHROMEDRIVER_VERSION=$(curl -sS chromedriver.storage.googleapis.com/LATEST_RELEASE) && \
-    wget -q -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/$CHROMEDRIVER_VERSION/chromedriver_linux64.zip && \
-    unzip /tmp/chromedriver.zip -d /usr/local/bin/ && \
-    chmod +x /usr/local/bin/chromedriver
+# Install Chrome
+RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && \
+    apt install -y ./google-chrome-stable_current_amd64.deb && \
+    rm google-chrome-stable_current_amd64.deb
+
+# Set environment variable for Chrome
+ENV CHROME_BIN=/usr/bin/google-chrome
 
 # Set working directory
 WORKDIR /app
 
-# Copy files
+# Copy project
 COPY . .
 
-# Install Python deps
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
 
 # Expose port
 EXPOSE 5000
 
-# Run app
+# Run the application
 CMD ["python", "app.py"]
